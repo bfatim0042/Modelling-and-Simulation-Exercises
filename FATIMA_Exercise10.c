@@ -1,0 +1,270 @@
+
+////#-- ========================================================================================
+//#--                Exercise 10 - Bea Fatima, Student ID: 1725181
+//#-- ========================================================================================
+
+//sources: https://algorithmafternoon.com/books/simulated_annealing/chapter02/
+//https://en.wikipedia.org/wiki/Sudoku_solving_algorithms?
+
+//General guideline from Wikipedia:
+//Randomly assign numbers to the blank cells in the grid.
+//Calculate the number of errors (or energy in our case)
+//"Shuffle" the inserted numbers until the number of mistakes is reduced to zero.
+
+#include <stdio.h>
+#include <time.h>
+#include <math.h>
+#include "mt19937.h"
+
+#define DIM 9 //define size of sudoku
+
+const int mc_steps = 1000000; //number of MC steps
+const int output_steps = 1000; //how often energy is printed
+double T = 2.0; //init temperature
+const double alpha = 0.9995; //cooling rate for cooling schedule
+
+int sudoku[DIM][DIM]; //sudoku grid
+int given[DIM][DIM]; //given numbers in the grid (0s if empty, 1s if given)
+
+//if energy==0, there is a perfect sudoku solution 
+int compute_energy() {
+    int energy = 0;
+
+    for (int i = 0; i < DIM; i++) { //loop over rows
+        int duplicate[10] = {0}; //count occurences of numbers 1-9
+        for (int j = 0; j < DIM; j++) { //go through each number in row
+            duplicate[sudoku[i][j]]++; //increment count for that number
+        }
+        for (int k = 1; k <= 9; k++) { //check for duplicates
+            if (duplicate[k] > 1)
+                energy += duplicate[k] - 1; //if there are duplicates, add to energy count
+        }
+    }
+
+    for (int j = 0; j < DIM; j++) { // do the same thing but loop over columns
+        int duplicate[10] = {0}; //reset counter
+        for (int i = 0; i < DIM; i++) {
+            duplicate[sudoku[i][j]]++;
+        }
+        for (int k = 1; k <= 9; k++) {
+            if (duplicate[k] > 1)
+                energy += duplicate[k] - 1;
+        }
+    }
+
+    return energy; //return total energy count
+}
+
+void fill_sudoku(void){
+    for(int block = 0; block < 9; block++){ //for each 3x3 block (9 total)
+        int num[9]; //array to hold 1-9
+
+        for(int i = 0; i < 9; i++) num[i] = i + 1; //make array be [1,2,3,4,5,6,7,8,9]
+
+        //block 0 starts at (0,0), block 1 starts at (0,3), block 2 starts at (0,6)
+        //block 3 starts at (3,0), block 4 starts at (3,3), block 5 starts at (3,6)
+        //block 6 starts at (6,0), block 7 starts at (6,3), block 8 starts at (6,6)
+        int row_coord = (block/3)*3;
+        int col_coord = (block%3)*3;
+
+        //remove the numbers that are already given from the num array
+        for(int i = 0; i < 3; i++){
+            for(int j = 0; j < 3; j++){ //loop over 3x3 block
+                if(given[row_coord+i][col_coord+j]){ //if there is a number there
+                    int val = sudoku[row_coord+i][col_coord+j]; //find the number
+                    for(int k = 0; k < 9; k++){ //loop through num array
+                        if(num[k] == val){ //if it is in the array
+                            num[k] = 0; //remove by setting to 0
+                        }
+                    } 
+                }
+            }
+        }
+
+        //create new array with zeroes removed
+        int uniquenum[9]; //array to hold remaining numbers
+        int index = 0; 
+        for(int i = 0; i < 9; i++){ //loop through num array
+            if(num[i] != 0){ //if it is not zero
+                uniquenum[index++] = num[i]; //add to uniquenum and increment
+            }
+        }
+
+        //shuffle so it is a different random configuration each time
+        for(int i = index-1; i > 0; i--){ //loop backwards 
+            int j = (int)(dsfmt_genrand() * (i+1)); //pick random index
+            int i_val = uniquenum[i]; //stores value at i
+            uniquenum[i] = uniquenum[j]; //swiches value at i to value at j
+            uniquenum[j] = i_val; //switches value at j to original value at i
+        }
+        
+        //fill rest of the cells with the remaining shuffled numbers
+        index = 0; //reset
+        for(int i = 0; i < 3; i++){ 
+            for(int j = 0; j < 3; j++){//loop over 3x3 block
+                if(!given[row_coord+i][col_coord+j]){ //if there is no number there (0)
+                    sudoku[row_coord+i][col_coord+j] = uniquenum[index++]; //assign it a number from the randomly shuffled array
+                }
+            }
+        }
+    }
+}
+
+void mc_move(void){
+
+    int rand_grid = (int)(dsfmt_genrand() * 9); //choose random grid 
+
+    //find coordinate of top left corner of grid
+    int row_coord = (rand_grid/3)*3;
+    int col_coord = (rand_grid%3)*3;
+
+    int x1, y1, x2, y2; //(x1, y1) and (x2, y2) are the coords of the two cells we will swap
+
+    //pick position in block to swap (only if it is not already given)
+    do{
+        x1 = row_coord + (int)(dsfmt_genrand()*3); //pick random row
+        y1 = col_coord + (int)(dsfmt_genrand()*3); //pick random column
+    } while(given[x1][y1]);
+
+    //pick second position in block to swap
+    do{
+        x2 = row_coord + (int)(dsfmt_genrand()*3); //pick random row
+        y2 = col_coord + (int)(dsfmt_genrand()*3); //pick random column
+    } while(given[x2][y2] || (x1 == x2 && y1 == y2)); //make sure it is not the same cell as before
+
+    int old_energy = compute_energy(); //compute energy before swapping
+
+    //store values before swapping
+    int val1 = sudoku[x1][y1];
+    int val2 = sudoku[x2][y2];
+
+    //complete swap
+    sudoku[x1][y1] = val2;
+    sudoku[x2][y2] = val1;
+
+    int new_energy = compute_energy(); //compute energy after swapping
+
+    double beta = 1.0 / T; //compute beta for acceptance probability
+
+    //metropolis acceptance
+    double accrule = -beta * (new_energy - old_energy);
+
+    if(dsfmt_genrand() < exp(accrule)){ 
+        //accept move
+        return;
+    }
+
+    //if rejected, swap back to original values
+    sudoku[x1][y1] = val1;
+    sudoku[x2][y2] = val2;
+    
+}
+
+
+void read_data(void){
+
+    FILE *sudoku_dat = fopen("sudoku.dat","r"); //open file
+
+    if(sudoku_dat == NULL){
+        printf("Error opening sudoku.dat\n"); //error message
+        return;
+    }
+
+    for(int i = 0; i < DIM; i++){
+        for(int j = 0; j < DIM; j++){
+
+            fscanf(sudoku_dat, "%d", &sudoku[i][j]); //read in number and store in sudoku array
+
+            if(sudoku[i][j] != 0){ //if it is given, put in 1 in that position in the given array
+                given[i][j] = 1; //mark as given
+            } else {
+                given[i][j] = 0; //if it is not given, put in 0
+            }
+        }
+    }
+
+    fclose(sudoku_dat);
+}
+
+
+void print_sudoku(void){ //function to print sudoku grid
+    for(int i = 0; i < DIM; i++){
+        for(int j = 0; j < DIM; j++){
+            printf("%d ", sudoku[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+int main(void){
+
+    dsfmt_seed(time(NULL));
+
+    //read in the sudoku data and store given numbers
+    read_data();
+
+    //print initial sudoku 
+    printf("Initial Sudoku:\n");
+    print_sudoku();
+    
+    //initialize sudoku (fill blocks)
+    fill_sudoku();
+
+    //compute initial energy
+    int E = compute_energy();
+
+    printf("Initial energy: %d\n", E);
+
+    //seed random number generator
+    size_t seed = time(NULL);
+    dsfmt_seed(seed);
+
+    //output file
+    FILE* fp = fopen("sudokuoutput.dat", "w");
+
+    //main mc loop
+    int step;
+    for(step = 0; step < mc_steps; ++step){
+
+        //perform one mc move
+        mc_move();
+
+        //measure energy
+        E = compute_energy();
+
+        //write to file
+        fprintf(fp, "%d\t%d\t%f\n", step, E, T);
+
+        //print progress every output_steps
+        if(step % output_steps == 0){
+            printf("Step %d. Energy = %d\n", step, E);
+        }
+
+        //stop if we have found a solution (energy = 0)
+        if(E == 0){
+            printf("\nSudoku was solved at step %d\n", step);
+            printf("Final temperature: %f\n", T);
+
+        //print solution
+            printf("Final Sudoku (solved):\n");
+            print_sudoku();
+        break;
+        
+    }
+        //cooling schedule 
+        T *= alpha;
+    }
+
+    //if we are unable to find a solution, print final energy and sudoku anyways
+    if(E != 0){
+    printf("\nSudoku is unsolved.\n");
+    printf("Final energy: %d\n", E);
+    printf("Final temperature: %f\n", T);
+
+    printf("Final Sudoku (unsolved):\n");
+    print_sudoku();
+    }
+
+    fclose(fp);
+    return 0;
+}
